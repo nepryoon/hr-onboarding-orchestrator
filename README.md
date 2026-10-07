@@ -25,7 +25,7 @@ illustrative estimate of manual minutes avoided, with its assumptions shown.
 
 ```
 Browser ──POST /api/onboarding/run──▶ Orchestrator (Pages Function, SSE stream)
-   ▲                                     │  1. LLM (Groq, tool calling) proposes the next tool
+   ▲                                     │  1. LLM (OpenAI-compatible API, tool calling) proposes the next tool
    │  SSE events                         │     └─ or the scripted planner, on fallback
    │                                     │  2. Schema validation + policy (dependency graph, budget)
    └─────────────────────────────────────│  3. HTTP call ──▶ /api/onboarding/systems/{hris,it,payroll,calendar,messaging}
@@ -67,7 +67,7 @@ config/onboarding/        shared modules (outside functions/, so they never beco
   tools.js                tool contracts and JSON-schema validation
   policy.js               dependency graph and other guardrails
   planner.js              deterministic fallback planner
-  llm.js                  Groq client, prompts, tool-call parsing
+  llm.js                  OpenAI-compatible LLM client, prompts, tool-call parsing
   orchestrator.js         agent loop, retries, transport fallback, resume-state replay
   http.js                 input allow-lists and SSE response helper
 functions/api/onboarding/
@@ -83,8 +83,14 @@ test/                     node:test suites
 
 | Variable | Purpose |
 | --- | --- |
-| `GROQ_API_KEY` | Groq API key (same variable as the site's other Functions). Without it the scripted planner runs. |
-| `ONBOARDING_LLM_MODEL` | Optional model override. Default: `openai/gpt-oss-120b`. |
+| `DEEPSEEK_API_KEY` | API key for the LLM provider. Without it the scripted planner runs. |
+| `ONBOARDING_LLM_MODEL` | Optional model override. Default: `deepseek-flash`. |
+| `ONBOARDING_LLM_BASE_URL` | Optional base URL of any OpenAI-compatible API (`https` only; `/chat/completions` is appended). Default: `https://api.deepseek.com`. |
+
+The model sits behind an OpenAI-compatible chat completions API and is chosen by configuration. With
+the default provider, thinking mode is disabled on every request: in thinking mode the API rejects
+`tool_choice: "required"` and expects earlier reasoning to be sent back with tools, which would break
+the compact per-turn prompt; non-thinking mode is also faster. Reasoning text is never sent to the page.
 
 Secrets live in Cloudflare Pages environment variables or a local `.dev.vars`, which is git-ignored.
 

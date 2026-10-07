@@ -8,7 +8,7 @@ import { runOnboarding } from "../../../config/onboarding/orchestrator.js";
 import { jsonResponse, parseRunRequest, sseResponse } from "../../../config/onboarding/http.js";
 
 export function onRequestGet(context) {
-  const llm = Boolean(context.env.GROQ_API_KEY);
+  const llm = Boolean(context.env.DEEPSEEK_API_KEY);
   return jsonResponse({
     ...publicCatalogue(),
     mode: llm ? "llm" : "scripted",

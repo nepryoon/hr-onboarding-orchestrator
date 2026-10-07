@@ -1,12 +1,30 @@
-// LLM client for the onboarding agent. Same provider and key as the other site Functions (Groq).
+// LLM client for the onboarding agent: any OpenAI-compatible chat completions API (DeepSeek by default).
 // Only server-side, allow-listed data is placed in the prompt: no visitor text ever reaches it.
 
 import { HIRES, COMPANY, MAX_TOOL_CALLS, DELAY_DAYS, addDays } from "./catalogue.js";
 import { toolDefinitionsForLlm } from "./tools.js";
 
-export const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
-export const DEFAULT_MODEL = "openai/gpt-oss-120b";
+export const DEFAULT_BASE_URL = "https://api.deepseek.com";
+export const DEFAULT_MODEL = "deepseek-flash";
 const MODEL_PATTERN = /^[A-Za-z0-9._/:-]{1,80}$/;
+
+// Optional ONBOARDING_LLM_BASE_URL override; only absolute https URLs are accepted.
+export function resolveBaseUrl(env = {}) {
+  const override = typeof env.ONBOARDING_LLM_BASE_URL === "string" ? env.ONBOARDING_LLM_BASE_URL.trim() : "";
+  if (override) {
+    try {
+      const url = new URL(override);
+      if (url.protocol === "https:" && !url.search && !url.hash) return url.href.replace(/\/+$/, "");
+    } catch {
+      // Invalid override: keep the default.
+    }
+  }
+  return DEFAULT_BASE_URL;
+}
+
+export function chatCompletionsUrl(baseUrl) {
+  return `${baseUrl}/chat/completions`;
+}
 
 export function resolveModel(env = {}) {
   const override = typeof env.ONBOARDING_LLM_MODEL === "string" ? env.ONBOARDING_LLM_MODEL.trim() : "";
@@ -69,11 +87,14 @@ export async function callLlm({ sleep = (ms) => new Promise((r) => setTimeout(r,
   return callLlmOnce(options);
 }
 
-async function callLlmOnce({ apiKey, model, messages, fetchImpl = fetch, timeoutMs = 15000 }) {
+// Thinking is disabled: in thinking mode DeepSeek rejects tool_choice "required" (HTTP 400) and expects
+// every earlier reasoning_content to be sent back with tools, which the compact per-turn prompt avoids.
+// Non-thinking mode also answers faster. reasoning_content is never read or forwarded to the page.
+async function callLlmOnce({ apiKey, model, messages, baseUrl = DEFAULT_BASE_URL, fetchImpl = fetch, timeoutMs = 15000 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetchImpl(GROQ_URL, {
+    const res = await fetchImpl(chatCompletionsUrl(baseUrl), {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -81,25 +102,45 @@ async function callLlmOnce({ apiKey, model, messages, fetchImpl = fetch, timeout
         messages,
         tools: toolDefinitionsForLlm(),
         tool_choice: "required",
-        parallel_tool_calls: false,
+        thinking: { type: "disabled" },
         temperature: 0.2,
-        max_tokens: 600,
-        ...(model.startsWith("openai/gpt-oss") ? { reasoning_effort: "low" } : {})
+        max_tokens: 600
       }),
       signal: controller.signal
     });
     if (!res.ok) {
       return { ok: false, retryable: res.status === 429 || res.status >= 500, error: `provider returned HTTP ${res.status}` };
     }
-    const data = await res.json();
+    const data = parseProviderJson(await res.text());
     const message = data?.choices?.[0]?.message;
     if (!message) return { ok: false, error: "provider returned no message" };
-    return { ok: true, message };
+    return { ok: true, message: { tool_calls: message.tool_calls }, usage: readUsage(data.usage) };
   } catch (err) {
     return { ok: false, retryable: false, error: err?.name === "AbortError" ? "provider timed out" : "provider unreachable" };
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Non-streaming responses may be preceded by keep-alive empty lines; a body that still is not JSON
+// is treated as "no message" rather than an exception.
+export function parseProviderJson(text) {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function readUsage(usage) {
+  const count = (value) => (Number.isFinite(value) && value >= 0 ? value : 0);
+  return {
+    promptTokens: count(usage?.prompt_tokens),
+    completionTokens: count(usage?.completion_tokens),
+    totalTokens: count(usage?.total_tokens)
+  };
 }
 
 export function parseToolCall(message) {

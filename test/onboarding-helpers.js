@@ -49,12 +49,12 @@ export async function serve(handler) {
   return { origin: `http://127.0.0.1:${port}`, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
-// Fake Groq endpoint: returns the queued tool calls in order, then reports exhaustion.
+// Fake OpenAI-compatible LLM endpoint: returns the queued tool calls in order, then reports exhaustion.
 export function fakeLlm(replies) {
   const calls = [];
   const queue = [...replies];
   const fetchImpl = async (url, init) => {
-    calls.push(JSON.parse(init.body));
+    calls.push({ ...JSON.parse(init.body), url });
     const next = queue.shift();
     if (!next) return new Response("{}", { status: 500 });
     if (next.status) return new Response("{}", { status: next.status });
@@ -63,9 +63,12 @@ export function fakeLlm(replies) {
       : {
           role: "assistant",
           content: null,
+          reasoning_content: "SECRET-REASONING should never reach the page",
           tool_calls: [{ id: `call_${calls.length}`, type: "function", function: { name: next.name, arguments: typeof next.args === "string" ? next.args : JSON.stringify(next.args) } }]
         };
-    return Response.json({ choices: [{ message }] });
+    // Keep-alive empty lines before the JSON body, as the provider may send on non-streaming requests.
+    const usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
+    return new Response(`\n\n${JSON.stringify({ choices: [{ message }], usage })}`, { headers: { "content-type": "application/json" } });
   };
   return { fetchImpl, calls };
 }

@@ -196,7 +196,7 @@
     <section class="section card how" aria-labelledby="how-title">
       <h2 id="how-title">How it works</h2>
       <ul class="clean">
-        <li><strong>Agent loop with tool calling:</strong> a Groq-hosted LLM picks the next tool; a Cloudflare Pages Function executes it and streams every event to this page over Server-Sent Events.</li>
+        <li><strong>Agent loop with tool calling:</strong> an LLM behind an OpenAI-compatible API, with the model set by configuration, picks the next tool; a Cloudflare Pages Function executes it and streams every event to this page over Server-Sent Events.</li>
         <li><strong>Real HTTP integrations:</strong> HRIS, IT, Payroll, Calendar and Messaging are stateless simulated APIs under <code>/api/onboarding/systems/</code>, with deterministic IDs and scenario-driven failures.</li>
         <li><strong>Guardrails in code, not in the prompt:</strong> schema validation of every call, a dependency graph (no IT ticket or payroll before the HRIS record, welcome message last), least-privilege access groups and a 12-call budget. Rejected calls appear as “blocked by policy”.</li>
         <li><strong>Resilience:</strong> HTTP 503s are retried with exponential backoff; if the LLM is missing, errors or makes two invalid calls, a deterministic planner finishes the same workflow through the same tools and guardrails.</li>

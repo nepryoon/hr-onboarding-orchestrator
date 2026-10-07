@@ -6,7 +6,7 @@ import { HIRES, SCENARIOS, DECISION_OPTIONS, MAX_TOOL_CALLS, MANUAL_MINUTES, LAP
 import { TOOLS, validateToolCall } from "./tools.js";
 import { initialFacts, checkPolicy, applyResult, awaitingDecision, remainingSteps, isComplete } from "./policy.js";
 import { nextScriptedCall } from "./planner.js";
-import { callLlm, parseToolCall, systemPrompt, progressMessage, resolveModel } from "./llm.js";
+import { callLlm, parseToolCall, systemPrompt, progressMessage, resolveModel, resolveBaseUrl } from "./llm.js";
 import { handleSystemRequest, SYSTEMS_PREFIX, SIM_HEADER, stableId } from "./systems.js";
 
 export const STATE_VERSION = 1;
@@ -189,8 +189,11 @@ export async function runOnboarding({ hireId, scenarioId, env = {}, origin, emit
     history: resume ? resume.history : []
   };
   const hire = HIRES[run.facts.hireId];
-  const apiKey = typeof env.GROQ_API_KEY === "string" ? env.GROQ_API_KEY.trim() : "";
+  const apiKey = typeof env.DEEPSEEK_API_KEY === "string" ? env.DEEPSEEK_API_KEY.trim() : "";
   const model = resolveModel(env);
+  const baseUrl = resolveBaseUrl(env);
+  // Token usage for this stream only; it is reported, never part of the resumable state.
+  const llmUsage = { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let mode = apiKey ? "llm" : "scripted";
 
   await emit("run_started", {
@@ -235,7 +238,8 @@ export async function runOnboarding({ hireId, scenarioId, env = {}, origin, emit
             : `Keep ${hire.laptopModel}; move the start date to ${addDays(hire.startDate, DELAY_DAYS)}.`
         })),
         state: exportState(run),
-        counters: { ...run.counters }
+        counters: { ...run.counters },
+        llmUsage: { ...llmUsage }
       });
       return { status: "awaiting_approval" };
     }
@@ -256,7 +260,11 @@ export async function runOnboarding({ hireId, scenarioId, env = {}, origin, emit
         { role: "system", content: systemPrompt(run.facts) },
         { role: "user", content: `${progressMessage(run.facts)}${feedback}` }
       ];
-      const reply = await callLlm({ apiKey, model, messages, fetchImpl: run.deps.llmFetch, sleep: run.deps.sleep });
+      const reply = await callLlm({ apiKey, model, baseUrl, messages, fetchImpl: run.deps.llmFetch, sleep: run.deps.sleep });
+      if (reply.ok) {
+        llmUsage.calls += 1;
+        for (const key of ["promptTokens", "completionTokens", "totalTokens"]) llmUsage[key] += reply.usage[key];
+      }
       if (!reply.ok) {
         await switchToScripted(`LLM provider error (${reply.error}); switching to the scripted planner.`);
         continue;
@@ -338,6 +346,7 @@ export async function runOnboarding({ hireId, scenarioId, env = {}, origin, emit
     transport: run.transport,
     systemsTouched: touched,
     counters: { ...run.counters },
+    llmUsage: { ...llmUsage },
     welcomeMessage: run.welcomeMessage,
     estimate: {
       label: "Illustrative estimate",

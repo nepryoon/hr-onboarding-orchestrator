@@ -4,7 +4,7 @@ import { collect, resumeWith, fakeLlm, serve, readSse } from "./onboarding-helpe
 import { restoreState } from "../config/onboarding/orchestrator.js";
 import { handleSystemRequest } from "../config/onboarding/systems.js";
 import { employeeIdFor } from "../config/onboarding/systems.js";
-import { resolveModel, DEFAULT_MODEL } from "../config/onboarding/llm.js";
+import { resolveModel, resolveBaseUrl, parseProviderJson, DEFAULT_MODEL, DEFAULT_BASE_URL } from "../config/onboarding/llm.js";
 import * as runFn from "../functions/api/onboarding/run.js";
 import * as resumeFn from "../functions/api/onboarding/resume.js";
 
@@ -92,7 +92,7 @@ test("LLM agent drives the workflow and a policy violation is streamed and fed b
   ]);
   const { result, of } = await collect({
     hireId: "hire-ada", scenarioId: "happy",
-    env: { GROQ_API_KEY: "test-key", ONBOARDING_LLM_MODEL: "test/model-1" },
+    env: { DEEPSEEK_API_KEY: "test-key", ONBOARDING_LLM_MODEL: "test/model-1" },
     deps: { llmFetch: llm.fetchImpl }
   });
   assert.equal(result.status, "completed");
@@ -106,6 +106,34 @@ test("LLM agent drives the workflow and a policy violation is streamed and fed b
   assert.equal(of("completed")[0].mode, "llm");
   assert.equal(of("completed")[0].counters.blocked, 1);
   assert.match(of("completed")[0].welcomeMessage, /Welcome aboard/);
+  assert.equal(llm.calls[0].url, "https://api.deepseek.com/chat/completions");
+  assert.deepEqual(llm.calls[0].thinking, { type: "disabled" }, "thinking is off so tool_choice required is accepted");
+  assert.equal(llm.calls[0].tool_choice, "required");
+  assert.deepEqual(of("completed")[0].llmUsage, { calls: 7, promptTokens: 700, completionTokens: 140, totalTokens: 840 });
+  assert.ok(llm.calls.every((call) => !JSON.stringify(call.messages).includes("SECRET-REASONING")), "reasoning is not sent back");
+});
+
+test("reasoning_content never reaches the page", async () => {
+  const llm = fakeLlm([{ name: "hris_create_employee", args: { reason: "First step.", hire_id: "hire-ada" } }]);
+  const { events } = await collect({ hireId: "hire-ada", scenarioId: "happy", env: { DEEPSEEK_API_KEY: "k" }, deps: { llmFetch: llm.fetchImpl } });
+  assert.ok(!JSON.stringify(events).includes("SECRET-REASONING"));
+});
+
+test("the old GROQ_API_KEY is ignored and ONBOARDING_LLM_BASE_URL overrides the endpoint", async () => {
+  const { of } = await collect({ hireId: "hire-ada", scenarioId: "happy", env: { GROQ_API_KEY: "old-key" } });
+  assert.equal(of("run_started")[0].mode, "scripted");
+  const llm = fakeLlm([{ name: "hris_create_employee", args: { reason: "First step.", hire_id: "hire-ada" } }]);
+  await collect({ hireId: "hire-ada", scenarioId: "happy", env: { DEEPSEEK_API_KEY: "k", ONBOARDING_LLM_BASE_URL: "https://llm.example.test/v1/" }, deps: { llmFetch: llm.fetchImpl } });
+  assert.equal(llm.calls[0].url, "https://llm.example.test/v1/chat/completions");
+  assert.equal(resolveBaseUrl({}), DEFAULT_BASE_URL);
+  assert.equal(resolveBaseUrl({ ONBOARDING_LLM_BASE_URL: "http://insecure.example.test" }), DEFAULT_BASE_URL);
+  assert.equal(resolveBaseUrl({ ONBOARDING_LLM_BASE_URL: "not a url" }), DEFAULT_BASE_URL);
+});
+
+test("provider bodies with keep-alive empty lines parse safely", () => {
+  assert.deepEqual(parseProviderJson("\n\n  {\"a\":1}\n"), { a: 1 });
+  assert.equal(parseProviderJson("\n\n"), null);
+  assert.equal(parseProviderJson("{not json"), null);
 });
 
 test("two invalid tool calls switch to the scripted planner, which completes the run", async () => {
@@ -113,7 +141,7 @@ test("two invalid tool calls switch to the scripted planner, which completes the
     { name: "hris_create_employee", args: { reason: "x", hire_id: "hire-ada", extra: true } },
     { text: "I think we should start with HR." }
   ]);
-  const { result, of } = await collect({ hireId: "hire-ada", scenarioId: "transient", env: { GROQ_API_KEY: "k" }, deps: { llmFetch: llm.fetchImpl } });
+  const { result, of } = await collect({ hireId: "hire-ada", scenarioId: "transient", env: { DEEPSEEK_API_KEY: "k" }, deps: { llmFetch: llm.fetchImpl } });
   assert.equal(result.status, "completed");
   assert.equal(of("invalid_call").length, 2);
   assert.match(of("fallback")[0].reason, /two invalid tool calls/);
@@ -122,7 +150,7 @@ test("two invalid tool calls switch to the scripted planner, which completes the
 
 test("provider errors fall back to the scripted planner and the demo still completes", async () => {
   const llm = fakeLlm([{ status: 500 }, { status: 500 }]);
-  const { result, of } = await collect({ hireId: "hire-mateo", scenarioId: "happy", env: { GROQ_API_KEY: "k" }, deps: { llmFetch: llm.fetchImpl } });
+  const { result, of } = await collect({ hireId: "hire-mateo", scenarioId: "happy", env: { DEEPSEEK_API_KEY: "k" }, deps: { llmFetch: llm.fetchImpl } });
   assert.equal(result.status, "completed");
   assert.equal(llm.calls.length, 2, "one retry before falling back");
   assert.match(of("fallback")[0].reason, /provider error/);
@@ -130,7 +158,8 @@ test("provider errors fall back to the scripted planner and the demo still compl
 
 test("model is overridable through ONBOARDING_LLM_MODEL and sanitised", () => {
   assert.equal(resolveModel({}), DEFAULT_MODEL);
-  assert.equal(resolveModel({ ONBOARDING_LLM_MODEL: "openai/gpt-oss-20b" }), "openai/gpt-oss-20b");
+  assert.equal(DEFAULT_MODEL, "deepseek-flash");
+  assert.equal(resolveModel({ ONBOARDING_LLM_MODEL: "deepseek-v4-pro" }), "deepseek-v4-pro");
   assert.equal(resolveModel({ ONBOARDING_LLM_MODEL: "bad model; drop" }), DEFAULT_MODEL);
 });
 
