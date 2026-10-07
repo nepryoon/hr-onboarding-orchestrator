@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HR Onboarding Orchestrator — Agentic Workflow Demo | Neuromorphic Inference Lab</title>
+  <meta name="description" content="Live demo: an LLM agent onboards a synthetic new hire across HRIS, IT, Payroll, Calendar and Messaging APIs, with retries, code-enforced guardrails and human approval of exceptions." />
+  <link rel="canonical" href="https://www.neuromorphicinference.com/demos/onboarding-orchestrator/" />
+  <link rel="icon" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+
+  <style>
+    /* ── Onboarding Orchestrator page styles ── */
+    .ob-notice { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-top: 14px; padding: 10px 14px; border-radius: 14px; border: 1px solid rgba(245,158,11,.35); background: rgba(245,158,11,.08); font-size: 14px; }
+    .ob-notice strong { color: var(--txt); }
+    .mode-badge { font-size: 12px; font-weight: 700; letter-spacing: .04em; padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.06); white-space: nowrap; }
+    .mode-badge.llm { border-color: rgba(110,231,255,.45); background: rgba(110,231,255,.12); color: var(--a1); }
+    .mode-badge.scripted { border-color: rgba(167,139,250,.45); background: rgba(167,139,250,.12); color: var(--a2); }
+
+    fieldset { border: 0; margin: 0 0 14px; padding: 0; min-width: 0; }
+    legend { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; padding: 0; }
+    .choice-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    @media (max-width: 760px) { .choice-grid { grid-template-columns: 1fr; } }
+    .choice { position: relative; display: block; cursor: pointer; }
+    .choice input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
+    .choice .face { display: block; height: 100%; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.18); transition: border-color .15s ease, background .15s ease; }
+    .choice .face b { display: block; font-size: 14px; margin-bottom: 4px; color: var(--txt); }
+    .choice .face span { display: block; font-size: 12.5px; line-height: 1.5; color: var(--muted); margin: 0; font-weight: 400; }
+    .choice input:checked + .face { border-color: rgba(110,231,255,.55); background: rgba(110,231,255,.08); }
+    .choice input:focus-visible + .face { outline: 2px solid rgba(110,231,255,.6); outline-offset: 2px; }
+    .run-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .run-row .btn { min-height: 44px; cursor: pointer; font-family: inherit; }
+    .run-row .btn[disabled] { opacity: .55; cursor: not-allowed; transform: none; }
+    #runStatus { font-size: 13px; color: var(--muted); }
+
+    .ob-layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px; margin-top: 14px; }
+    @media (max-width: 960px) { .ob-layout { grid-template-columns: 1fr; } }
+    .ob-panel-title { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+
+    #timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; max-height: 640px; overflow-y: auto; }
+    .tl-empty { color: var(--muted); font-size: 14px; }
+    .tl { border-radius: 12px; border: 1px solid rgba(255,255,255,.10); background: rgba(0,0,0,.18); padding: 10px 12px; font-size: 13px; animation: tl-in .25s ease; }
+    @keyframes tl-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    .tl-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+    .tl-n { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: rgba(234,240,255,.5); }
+    .tl-tool { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-weight: 700; }
+    .pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); }
+    .pill.ok { color: #34d399; border-color: rgba(52,211,153,.35); background: rgba(52,211,153,.10); }
+    .pill.warn { color: #fbbf24; border-color: rgba(245,158,11,.40); background: rgba(245,158,11,.10); }
+    .pill.bad { color: #f87171; border-color: rgba(239,68,68,.40); background: rgba(239,68,68,.10); }
+    .tl-reason { color: var(--txt); line-height: 1.5; margin: 2px 0 4px; }
+    .tl-reason em { color: var(--muted); font-style: normal; }
+    .tl-meta { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); word-break: break-word; }
+    .tl details { margin-top: 6px; }
+    .tl summary { cursor: pointer; color: var(--a1); font-size: 12px; }
+    .tl pre { margin: 6px 0 0; font-size: 11.5px; max-height: 220px; white-space: pre-wrap; word-break: break-word; }
+    .tl.retry, .tl.fallback, .tl.transport { border-color: rgba(245,158,11,.30); }
+    .tl.blocked, .tl.invalid, .tl.halted { border-color: rgba(239,68,68,.35); }
+    .tl.approval { border-color: rgba(110,231,255,.45); background: rgba(110,231,255,.06); }
+    .tl.done { border-color: rgba(52,211,153,.35); }
+    .approval-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+    .approval-actions .btn { cursor: pointer; font-family: inherit; text-align: left; white-space: normal; flex-direction: column; align-items: flex-start; min-height: 44px; }
+    .approval-actions .btn small { font-weight: 400; color: var(--muted); }
+
+    .sys { display: grid; grid-template-columns: 12px 1fr; gap: 4px 10px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); }
+    .sys:last-child { border-bottom: 0; }
+    .sys-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: rgba(234,240,255,.25); }
+    .sys-name { font-weight: 700; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
+    .sys-state { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .sys-detail { grid-column: 2; font-size: 12.5px; color: var(--muted); line-height: 1.5; word-break: break-word; }
+    .sys[data-status="working"] .sys-dot, .sys[data-status="pending"] .sys-dot { background: var(--a1); box-shadow: 0 0 8px rgba(110,231,255,.6); }
+    .sys[data-status="retrying"] .sys-dot, .sys[data-status="attention"] .sys-dot { background: #fbbf24; box-shadow: 0 0 8px rgba(245,158,11,.6); }
+    .sys[data-status="error"] .sys-dot { background: #f87171; }
+    .sys[data-status="done"] .sys-dot { background: #34d399; }
+    .counters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 14px; }
+    .counter { padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.08); }
+    .counter b { display: block; font-size: 18px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .counter span { font-size: 11.5px; color: var(--muted); }
+
+    #summary[hidden] { display: none; }
+    .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .stat { padding: 12px; border-radius: 12px; background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.08); }
+    .stat b { display: block; font-size: 24px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .stat span { font-size: 12px; color: var(--muted); }
+    #welcomeMessage { white-space: pre-wrap; font-family: inherit; font-size: 14px; line-height: 1.6; }
+    .estimate { margin-top: 14px; padding: 12px 14px; border-radius: 12px; border: 1px dashed rgba(167,139,250,.45); }
+    .estimate h3 { font-size: 15px; }
+    .estimate table { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--muted); }
+    .estimate td { padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: top; }
+    .estimate td:last-child { text-align: right; white-space: nowrap; padding-left: 10px; }
+    .how a.text-link { color: var(--a1); text-decoration: underline; text-underline-offset: 3px; }
+  </style>
+</head>
+
+<body>
+  <header class="nav">
+    <div class="inner">
+      <a class="brand" href="/" aria-label="Neuromorphic Inference Lab home">
+        <img src="/logo.svg" alt="Neuromorphic Inference Lab" />
+        <span>Neuromorphic Inference Lab</span>
+      </a>
+      <nav class="navlinks" aria-label="Primary navigation">
+        <a data-nav href="/">Home</a>
+        <a data-nav href="/demos/">Systems</a>
+        <a data-nav href="/about/">About Me</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <p class="kicker">HR &amp; People automation · Agentic workflow</p>
+      <h1 class="h1">HR Onboarding Orchestrator</h1>
+      <p class="sub">
+        An LLM agent onboards a new hire across five systems through their APIs: HRIS, IT service desk,
+        Payroll, Calendar and Messaging. Guardrails are enforced in code, transient failures are retried,
+        and every exception waits for a human decision.
+      </p>
+      <div class="badges">
+        <span class="badge">Tool calling</span>
+        <span class="badge">Server-Sent Events</span>
+        <span class="badge">Retries with backoff</span>
+        <span class="badge">Human in the loop</span>
+        <span class="badge">Cloudflare Pages Functions</span>
+      </div>
+    </section>
+
+    <div class="ob-notice" role="note">
+      <span><strong>Synthetic data only. Simulated systems. A human approves every exception.</strong></span>
+      <span id="modeBadge" class="mode-badge" aria-live="polite">Mode: checking…</span>
+    </div>
+
+    <section class="section card" aria-labelledby="setup-title">
+      <h2 id="setup-title">1 · Choose a new hire and a scenario</h2>
+      <form id="runForm">
+        <fieldset>
+          <legend>New hire</legend>
+          <div class="choice-grid" id="hireChoices"><p class="small">Loading synthetic hires…</p></div>
+        </fieldset>
+        <fieldset>
+          <legend>Scenario</legend>
+          <div class="choice-grid" id="scenarioChoices"></div>
+        </fieldset>
+        <div class="run-row">
+          <button class="btn primary" id="runButton" type="submit" disabled>Run onboarding</button>
+          <span id="runStatus" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <div class="ob-layout">
+      <section class="card" aria-labelledby="timeline-title">
+        <h2 id="timeline-title" class="ob-panel-title">2 · Live agent timeline</h2>
+        <ol id="timeline" aria-live="polite" aria-label="Agent timeline">
+          <li class="tl-empty">Press “Run onboarding” to stream each step: the agent’s reason, the API call, status, duration and retries.</li>
+        </ol>
+      </section>
+
+      <aside class="card" aria-labelledby="systems-title">
+        <h2 id="systems-title" class="ob-panel-title">Simulated systems</h2>
+        <div id="systems">
+          <div class="sys" data-system="hris" data-status="idle"><span class="sys-dot"></span><div class="sys-name">HRIS <span class="sys-state">idle</span></div><div class="sys-detail">No employee record yet.</div></div>
+          <div class="sys" data-system="it" data-status="idle"><span class="sys-dot"></span><div class="sys-name">IT service desk <span class="sys-state">idle</span></div><div class="sys-detail">No stock check or ticket yet.</div></div>
+          <div class="sys" data-system="payroll" data-status="idle"><span class="sys-dot"></span><div class="sys-name">Payroll <span class="sys-state">idle</span></div><div class="sys-detail">Not registered.</div></div>
+          <div class="sys" data-system="calendar" data-status="idle"><span class="sys-dot"></span><div class="sys-name">Calendar <span class="sys-state">idle</span></div><div class="sys-detail">No meetings booked.</div></div>
+          <div class="sys" data-system="messaging" data-status="idle"><span class="sys-dot"></span><div class="sys-name">Messaging <span class="sys-state">idle</span></div><div class="sys-detail">Nothing sent.</div></div>
+        </div>
+        <div class="counters" aria-label="Run counters">
+          <div class="counter"><b id="cTool">0</b><span>tool calls (max <span id="cMax">12</span>)</span></div>
+          <div class="counter"><b id="cApi">0</b><span>API requests</span></div>
+          <div class="counter"><b id="cRetry">0</b><span>retries</span></div>
+          <div class="counter"><b id="cBlocked">0</b><span>blocked by policy</span></div>
+        </div>
+      </aside>
+    </div>
+
+    <section class="section card" id="summary" hidden aria-labelledby="summary-title">
+      <h2 id="summary-title">3 · Run summary</h2>
+      <div class="stat-row">
+        <div class="stat"><b id="sSystems">0</b><span>systems touched</span></div>
+        <div class="stat"><b id="sApi">0</b><span>API calls</span></div>
+        <div class="stat"><b id="sRetries">0</b><span>retries</span></div>
+        <div class="stat"><b id="sApprovals">0</b><span>human approvals</span></div>
+        <div class="stat"><b id="sBlocked">0</b><span>calls blocked by policy</span></div>
+      </div>
+      <p class="small" id="sMode"></p>
+      <h3>Welcome message sent to the new hire</h3>
+      <pre id="welcomeMessage"></pre>
+      <div class="estimate">
+        <h3>Illustrative estimate: <span id="sMinutes">0</span> manual minutes avoided</h3>
+        <p class="small">Not a measurement. Assumed minutes a coordinator would spend on each step that ran:</p>
+        <table><tbody id="sAssumptions"></tbody></table>
+      </div>
+    </section>
+
+    <section class="section card how" aria-labelledby="how-title">
+      <h2 id="how-title">How it works</h2>
+      <ul class="clean">
+        <li><strong>Agent loop with tool calling:</strong> a Groq-hosted LLM picks the next tool; a Cloudflare Pages Function executes it and streams every event to this page over Server-Sent Events.</li>
+        <li><strong>Real HTTP integrations:</strong> HRIS, IT, Payroll, Calendar and Messaging are stateless simulated APIs under <code>/api/onboarding/systems/</code>, with deterministic IDs and scenario-driven failures.</li>
+        <li><strong>Guardrails in code, not in the prompt:</strong> schema validation of every call, a dependency graph (no IT ticket or payroll before the HRIS record, welcome message last), least-privilege access groups and a 12-call budget. Rejected calls appear as “blocked by policy”.</li>
+        <li><strong>Resilience:</strong> HTTP 503s are retried with exponential backoff; if the LLM is missing, errors or makes two invalid calls, a deterministic planner finishes the same workflow through the same tools and guardrails.</li>
+        <li><strong>Human in control, no server state:</strong> exceptions end the stream with the run state; your decision resumes it, and the server replays and re-validates that state before acting. Visitors only choose from allow-lists, so no free text reaches the model.</li>
+      </ul>
+      <p class="mt-12">
+        Source code and tests:
+        <a class="text-link" href="https://github.com/nepryoon/hr-onboarding-orchestrator" target="_blank" rel="noopener noreferrer">github.com/nepryoon/hr-onboarding-orchestrator<span class="sr-only"> (opens in a new tab)</span></a>
+      </p>
+      <p class="lead mt-12">
+        Connecting to real systems keeps the same shape. An ATS webhook fires when an offer is signed and starts
+        the run; each simulated endpoint is replaced by a thin adapter for the real HRIS, ITSM, payroll, calendar
+        and messaging REST APIs, authenticated with OAuth service credentials held in the platform’s secret store.
+        The tool schemas, dependency graph and call budget stay unchanged, idempotency keys replace the
+        deterministic IDs so retries never create duplicates, every call is written to an audit log, and the
+        approval step is routed to the HR coordinator’s queue instead of this page.
+      </p>
+    </section>
+
+    <footer class="footer">
+      <div>© 2025 Neuromorphic Inference Lab</div>
+      <div class="prov">
+        <span id="build-branch">branch: …</span>
+        <span id="build-commit">commit: …</span>
+        <span id="build-time">built: …</span>
+      </div>
+    </footer>
+  </main>
+
+  <script src="/build-info.js"></script>
+  <script type="module" src="/demos/onboarding-orchestrator/app.js"></script>
+</body>
+</html>
